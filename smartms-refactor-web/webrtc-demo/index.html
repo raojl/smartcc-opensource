@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebRTC 软电话 PoC（sip.js 核心 API + Asterisk PJSIP）</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px; }
+  h1 { font-size: 18px; }
+  input, button { font-size: 14px; padding: 6px 10px; margin: 4px 0; box-sizing: border-box; }
+  input { width: 100%; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  #log { background: #f5f5f5; border-radius: 8px; padding: 10px; font-size: 12px; height: 220px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; }
+  .btn { background: #185FA5; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+  .btn:disabled { background: #aaa; }
+  .btn2 { background: #993C1D; }
+</style>
+</head>
+<body>
+<h1>WebRTC 软电话 PoC（sip.js 核心 API → Asterisk WS 8088）</h1>
+<div class="row">
+  <input id="exten" value="3102" placeholder="分机号">
+  <input id="pwd" type="password" value="123456" placeholder="密码">
+</div>
+<div class="row">
+  <button id="btnRegister" class="btn" onclick="doRegister()">注册</button>
+  <button id="btnUnregister" class="btn btn2" onclick="doUnregister()" disabled>注销</button>
+  <button id="btnCall" class="btn" onclick="doCall()" disabled>拨打 600</button>
+  <button id="btnHangup" class="btn btn2" onclick="doHangup()" disabled>挂断</button>
+  <button id="btnUnlock" class="btn" onclick="unlockAudio()" title="浏览器阻止自动播放时点击解锁">🔊 解锁播放</button>
+</div>
+<div class="row">
+  <input id="target" value="600" placeholder="被叫号码" style="width:70%">
+  <button id="btnAnswer" class="btn" onclick="doAnswer()" style="display:none">应答</button>
+</div>
+<div id="status" style="margin:8px 0; font-size:14px;">状态: 未连接</div>
+<div id="log"></div>
+
+<script src="./sip.js"></script>
+<script>
+const SERVER = '<SERVER_IP>';
+// HTTPS 页面用 wss://:8089，HTTP 页面用 ws://:8088（混合内容限制）
+const isHttps = location.protocol === 'https:';
+const WS_URI = (isHttps ? 'wss://' : 'ws://') + SERVER + (isHttps ? ':8089' : ':8088') + '/ws';
+let ua = null;
+let registerer = null;
+let session = null;
+
+function log(msg) {
+  const el = document.getElementById('log');
+  el.textContent += '[' + new Date().toLocaleTimeString() + '] ' + msg + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+function setStatus(s) { document.getElementById('status').textContent = '状态: ' + s; }
+function enable(on) {
+  document.getElementById('btnUnregister').disabled = !on;
+  document.getElementById('btnCall').disabled = !on;
+  document.getElementById('btnHangup').disabled = !on;
+}
+
+let audioEls = [];
+function unlockAudio() {
+  // 用户手势内恢复所有音频元素播放（绕过 autoplay 策略）
+  audioEls.forEach(el => { el.play().then(() => log('🔊 播放已解锁')).catch(e => log('⚠️ 仍受限: ' + e.message)); });
+  log('🔊 解锁播放点击，audio 元素数: ' + audioEls.length);
+}
+
+function playRemoteTrack(track, tag) {
+  log('🎧 媒体轨道: ' + track.kind + ' (' + tag + ')');
+  setStatus(tag + ' 媒体: ' + track.kind);
+  if (track.kind === 'audio') {
+    const el = document.createElement('audio');
+    el.srcObject = new MediaStream([track]);
+    el.autoplay = true;
+    el.style.display = 'none';
+    el.volume = 1.0;
+    document.body.appendChild(el);
+    audioEls.push(el);
+    el.play().then(() => {
+      log('🔊 远端音频播放中');
+      setStatus('通话中（🔊 播放中）');
+    }).catch(e => log('⚠️ 播放受限: ' + e.message + ' —— 点击「🔊 解锁播放」'));
+  }
+}
+
+function bindMedia(sess, tag) {
+  try {
+    // 0.16.1 Session 用 delegate.onTrack（构造时传入才可靠），stateChange 用 Emitter
+    if (sess.delegate) {
+      sess.delegate.onTrack = (track) => playRemoteTrack(track, tag);
+    }
+    if (sess.stateChange && sess.stateChange.addListener) {
+      sess.stateChange.addListener((state) => {
+        log('📡 会话状态: ' + state + ' (' + tag + ')');
+        if (state === SIP.SessionState.Established) { log('☎️ 通话接通'); document.getElementById('btnAnswer').style.display='none'; }
+        if (state === SIP.SessionState.Terminated) { log('通话结束'); document.getElementById('btnHangup').disabled = true; }
+      });
+    }
+  } catch (e) { log('媒体绑定: ' + e.message); }
+}
+
+async function doRegister() {
+  const exten = document.getElementById('exten').value || '3102';
+  const pwd = document.getElementById('pwd').value || '123456';
+  try {
+    log('创建 UserAgent，连接 ' + WS_URI);
+    ua = new SIP.UserAgent({
+      uri: SIP.UserAgent.makeURI('sip:' + exten + '@' + SERVER),
+      displayName: 'WebRTC-' + exten,
+      transportOptions: { server: WS_URI },
+      authorizationUsername: exten,
+      authorizationPassword: pwd,
+      logLevel: 'debug',
+    });
+    ua.delegate = {
+      onInvite(invitation) {
+        log('📞 来电: ' + invitation.remoteIdentity.uri.user);
+        session = invitation;
+        bindMedia(session, '来电');
+        // 来电同样用 peerConnection.ontrack 绑定播放
+        try {
+          const sdh = invitation.sessionDescriptionHandler;
+          if (sdh && sdh.peerConnection) {
+            sdh.peerConnection.ontrack = (event) => {
+              const track = event.streams && event.streams[0] ? event.streams[0].getAudioTracks()[0] : null;
+              if (track) playRemoteTrack(track, '来电(pc)');
+            };
+          }
+        } catch (e2) {}
+        document.getElementById('btnAnswer').style.display = '';
+        document.getElementById('btnHangup').disabled = false;
+      },
+      onRegistrationExpired() { log('注册过期'); },
+    };
+    await ua.start();
+    log('UserAgent 已启动，注册中...');
+    registerer = new SIP.Registerer(ua);
+    await registerer.register();
+    log('✅ 已注册（REGISTER 完成）');
+    setStatus('已注册（就绪）');
+    enable(true);
+  } catch (e) {
+    log('❌ 错误: ' + (e && e.message ? e.message : e));
+    console.error(e);
+  }
+}
+
+async function doUnregister() {
+  try {
+    if (registerer) await registerer.unregister();
+    if (ua) ua.stop();
+  } catch (e) { log('注销异常: ' + e.message); }
+  log('已注销'); setStatus('已注销'); enable(false);
+}
+
+async function doCall() {
+  try {
+    // 挂断上次残留通话（重拨时旧 session 不释放会残留 Echo 通道）
+    if (session && session.bye && !session.isTerminated) {
+      try { await session.bye(); } catch (e) {}
+    }
+    const target = document.getElementById('target').value || '600';
+    log('拨打 ' + target);
+    const targetURI = SIP.UserAgent.makeURI('sip:' + target + '@' + SERVER);
+    // 0.16.1 默认 audio+video，必须显式 audio-only（否则 SDP 带 video m-line，Asterisk 无视频编解码会 500）
+    // delegate 必须在构造时传入（构造后赋值不可靠），onTrack 绑定远端音频播放
+    const inviter = new SIP.Inviter(ua, targetURI, {
+      sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } },
+      delegate: { onTrack: (track) => playRemoteTrack(track, '外呼') }
+    });
+    session = inviter;
+    bindMedia(session, '外呼');
+    await inviter.invite();
+    // 0.16.1 最可靠：直接监听 peerConnection.ontrack（delegate.onTrack 可能不触发）
+    try {
+      const sdh = inviter.sessionDescriptionHandler;
+      if (sdh && sdh.peerConnection) {
+        sdh.peerConnection.ontrack = (event) => {
+          const track = event.streams && event.streams[0] ? event.streams[0].getAudioTracks()[0] : null;
+          if (track) playRemoteTrack(track, '外呼(pc)');
+        };
+        log('✅ peerConnection.ontrack 已绑定');
+      } else {
+        log('⚠️ 未找到 peerConnection（SDH=' + !!sdh + '）');
+      }
+    } catch (e2) { log('ontrack 绑定: ' + e2.message); }
+    document.getElementById('btnHangup').disabled = false;
+    log('INVITE 已发送');
+  } catch (e) { log('❌ 拨号错误: ' + (e && e.message ? e.message : e)); }
+}
+
+async function doAnswer() {
+  try {
+    if (session && session.accept) { await session.accept({ sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } } }); log('已应答'); document.getElementById('btnAnswer').style.display='none'; }
+  } catch (e) { log('应答错误: ' + e.message); }
+}
+
+async function doHangup() {
+  try {
+    if (session && session.bye) { await session.bye(); log('已挂断'); }
+    audioEls.forEach(el => { el.pause(); el.srcObject = null; });
+    audioEls = [];
+  } catch (e) { log('挂断错误: ' + e.message); }
+}
+</script>
+</body>
+</html>

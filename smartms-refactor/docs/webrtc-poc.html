@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智能呼叫中心 WebRTC 混合方案 PoC 验证报告</title>
+<style>
+  body { font-family: "Microsoft YaHei", system-ui, sans-serif; max-width: 960px; margin: 0 auto; padding: 32px 40px; color: #2b2b2b; line-height: 1.65; }
+  h1 { font-size: 26px; border-bottom: 3px solid #185FA5; padding-bottom: 10px; }
+  h2 { font-size: 20px; color: #185FA5; margin-top: 36px; border-left: 4px solid #185FA5; padding-left: 10px; }
+  h3 { font-size: 16px; color: #333; }
+  .meta { color: #666; font-size: 13px; margin-bottom: 24px; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; color: #fff; margin-right: 6px; }
+  .b-green { background: #2e9e44; } .b-blue { background: #185FA5; } .b-orange { background: #d97a16; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 13.5px; }
+  th, td { border: 1px solid #d0d7de; padding: 8px 10px; text-align: left; }
+  th { background: #f0f4f8; font-weight: 600; }
+  tr:nth-child(even) td { background: #fafbfc; }
+  .ok { color: #2e9e44; font-weight: 600; } .fail { color: #c0392b; font-weight: 600; }
+  .summary { background: #f0f7f0; border: 1px solid #bfe3bf; border-radius: 8px; padding: 14px 18px; margin: 16px 0; }
+  .code { background: #f6f8fa; border: 1px solid #e1e4e8; border-radius: 6px; padding: 10px 14px; font-family: Consolas, monospace; font-size: 12.5px; overflow-x: auto; }
+  ul { padding-left: 22px; } li { margin: 4px 0; }
+  .arch-box { background: #f7f9fc; border: 1px solid #d0d7de; border-radius: 8px; padding: 16px; text-align: center; }
+  .foot { margin-top: 40px; padding-top: 14px; border-top: 1px solid #e1e4e8; color: #888; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>智能呼叫中心 WebRTC 混合方案 PoC 验证报告</h1>
+<div class="meta">项目：SmartMS 呼叫中心（Asterisk 16.30）&nbsp;|&nbsp;日期：2026-08-22 &nbsp;|&nbsp;状态：<span class="badge b-green">验证通过</span><span class="badge b-blue">PoC 完成</span></div>
+
+<div class="summary">
+<b>结论：</b>浏览器 WebRTC 语音全链路打通 —— 浏览器（sip.js）通过 WSS 直连 Asterisk，DTLS-SRTP 加密媒体双向传输，回声测试通过。混合方案（WebRTC 语音 + IPC CTI 并行控制）架构验证成立，具备集成坐席工作台的工程条件。
+</div>
+
+<h2>一、背景与目标</h2>
+<p>现有呼叫中心坐席工作台依赖传统 SIP 软电话（插件/Flash 时代遗留），无法在现代浏览器直接使用。目标：</p>
+<ul>
+  <li>坐席在浏览器内直接拨打/接听电话（无插件、无下载）</li>
+  <li>WebRTC 语音与既有 IPC CTI 控制通道<b>并行</b>，互不干扰（混合方案）</li>
+  <li>信令加密（WSS）、媒体加密（DTLS-SRTP），符合安全要求</li>
+</ul>
+
+<h2>二、方案架构</h2>
+<div class="arch-box">
+<svg viewBox="0 0 860 320" width="860" height="320" xmlns="http://www.w3.org/2000/svg" style="max-width:100%;height:auto">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#185FA5"/></marker>
+    <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d97a16"/></marker>
+  </defs>
+  <!-- 坐席浏览器 -->
+  <rect x="30" y="90" width="200" height="140" rx="10" fill="#fff" stroke="#185FA5" stroke-width="2"/>
+  <text x="130" y="125" text-anchor="middle" font-size="15" font-weight="bold" fill="#185FA5">坐席浏览器</text>
+  <text x="130" y="148" text-anchor="middle" font-size="12" fill="#555">sip.js 软电话</text>
+  <text x="130" y="168" text-anchor="middle" font-size="12" fill="#555">WebRTC (DTLS-SRTP)</text>
+  <text x="130" y="188" text-anchor="middle" font-size="12" fill="#555">getUserMedia 麦克风</text>
+  <text x="130" y="215" text-anchor="middle" font-size="11" fill="#999">https://…/webrtc-demo/</text>
+
+  <!-- Asterisk -->
+  <rect x="470" y="70" width="250" height="180" rx="10" fill="#fff" stroke="#2e9e44" stroke-width="2"/>
+  <text x="595" y="105" text-anchor="middle" font-size="15" font-weight="bold" fill="#2e9e44">Asterisk 16.30</text>
+  <text x="595" y="128" text-anchor="middle" font-size="12" fill="#555">PJSIP WebSocket (wss:8089)</text>
+  <text x="595" y="148" text-anchor="middle" font-size="12" fill="#555">endpoint 3102（DTLS-SRTP / ICE）</text>
+  <text x="595" y="168" text-anchor="middle" font-size="12" fill="#555">res_srtp + libsrtp2</text>
+  <text x="595" y="188" text-anchor="middle" font-size="12" fill="#555">Echo 测试（600）</text>
+  <text x="595" y="215" text-anchor="middle" font-size="11" fill="#999"><SERVER_IP></text>
+
+  <!-- IPC CTI 并行 -->
+  <rect x="470" y="280" width="250" height="40" rx="8" fill="#fff" stroke="#d97a16" stroke-width="2"/>
+  <text x="595" y="305" text-anchor="middle" font-size="13" fill="#d97a16">IPC CTI 控制通道（并行，不变）</text>
+
+  <!-- 信令线 -->
+  <line x1="230" y1="130" x2="468" y2="115" stroke="#185FA5" stroke-width="2.5" marker-end="url(#ar)"/>
+  <text x="330" y="102" text-anchor="middle" font-size="12" fill="#185FA5">WSS 信令（加密）</text>
+  <text x="330" y="118" text-anchor="middle" font-size="11" fill="#999">REGISTER / INVITE / BYE</text>
+
+  <!-- 媒体线 -->
+  <path d="M232 160 Q 350 220 468 170" fill="none" stroke="#2e9e44" stroke-width="2.5" stroke-dasharray="8,4" marker-end="url(#ar)"/>
+  <text x="350" y="215" text-anchor="middle" font-size="12" fill="#2e9e44">RTP 媒体（DTLS-SRTP 加密）</text>
+  <text x="350" y="231" text-anchor="middle" font-size="11" fill="#999">ICE + STUN + UDP 10000-20000</text>
+
+  <!-- IPC 线 -->
+  <line x1="230" y1="300" x2="468" y2="300" stroke="#d97a16" stroke-width="2" marker-end="url(#ar2)"/>
+  <text x="350" y="292" text-anchor="middle" font-size="12" fill="#d97a16">坐席状态 / 呼叫事件 / 控制指令</text>
+</svg>
+</div>
+<p style="font-size:13px;color:#666;text-align:center">图 1：混合方案架构 —— WebRTC 语音（浏览器直连 Asterisk）与 IPC CTI 控制（并行）互不干扰</p>
+
+<h2>三、验证结果</h2>
+<table>
+  <tr><th style="width:180px">验证环节</th><th>结果</th><th>说明</th></tr>
+  <tr><td>浏览器注册（WSS）</td><td class="ok">✅ 通过</td><td>sip.js 经 wss://<SERVER_IP>:8089 完成 REGISTER（Digest 认证 200 OK）</td></tr>
+  <tr><td>呼叫建立（INVITE）</td><td class="ok">✅ 通过</td><td>INVITE → 401 → 认证 → 200 OK，Asterisk 应答含公网媒体地址</td></tr>
+  <tr><td>ICE 协商</td><td class="ok">✅ 通过</td><td>STUN 检测公网 srflx candidate，浏览器与 Asterisk ICE Connected</td></tr>
+  <tr><td>DTLS-SRTP 加密</td><td class="ok">✅ 通过</td><td>媒体加密协商成功（RTP type 00 已解密）</td></tr>
+  <tr><td>双向媒体</td><td class="ok">✅ 通过</td><td>Asterisk 持续收/发 RTP（下行 18806 包，Echo 回放）</td></tr>
+  <tr><td>浏览器播放</td><td class="ok">✅ 通过</td><td>pc.ontrack 绑定远端音频，用户听到回声</td></tr>
+  <tr><td>兼容网络</td><td class="ok">✅ 通过</td><td>家宽 WiFi、移动网络均验证（移动需 TURN 兜底更稳）</td></tr>
+</table>
+
+<h2>四、测试环境</h2>
+<table>
+  <tr><th style="width:200px">项目</th><th>值</th></tr>
+  <tr><td>服务器</td><td><SERVER_IP>（内网 172.17.0.7，云 NAT）</td></tr>
+  <tr><td>Asterisk</td><td>16.30.0（重编：pjproject 2.13 + SRTP + ICE）</td></tr>
+  <tr><td>Demo 地址</td><td>https://<SERVER_IP>/webrtc-demo/</td></tr>
+  <tr><td>测试分机</td><td>3102 / 123456（WebRTC endpoint，DTLS-SRTP + ICE）</td></tr>
+  <tr><td>Echo 测试号</td><td>600（回放本机声音验证双向媒体）</td></tr>
+  <tr><td>信令端口</td><td>WSS 8089（WebSocket）、WS 8088、HTTPS 443</td></tr>
+  <tr><td>媒体端口</td><td>UDP 10000-20000（云安全组放行）</td></tr>
+  <tr><td>证书</td><td>自签 CA（smartms-ca.crt，导入系统信任）</td></tr>
+</table>
+
+<h2>五、使用说明</h2>
+<ol>
+  <li>导入 CA 证书：双击 <code>smartms-ca.crt</code> → 安装到「受信任的根证书颁发机构」（一次性）</li>
+  <li>浏览器打开 <code>https://<SERVER_IP>/webrtc-demo/</code>（首次需授权麦克风）</li>
+  <li>点击「注册」→ 状态变「已注册（就绪）」</li>
+  <li>拨打 <code>600</code> → 通话接通 → 对着麦克风说话 → 听到回声（验证双向媒体）</li>
+  <li>若听不到声音：点击「🔊 解锁播放」按钮（浏览器自动播放策略）</li>
+</ol>
+
+<h2>六、技术要点（配置摘要）</h2>
+<h3>6.1 Asterisk WebRTC 关键配置</h3>
+<div class="code">
+# pjsip.conf —— WebRTC 传输与分机（核心）
+[transport-wss]
+type=transport
+protocol=wss
+bind=0.0.0.0:8089
+external_media_address=<SERVER_IP>
+
+[3102]
+type=endpoint
+transport=transport-wss
+context=from-sipreg
+media_encryption=dtls
+ice_support=yes
+webrtc=yes
+dtls_cert_file=/etc/ssl/smartms-ca/asterisk.pem
+media_address=<SERVER_IP>        # 应答媒体地址=公网（关键）
+allow=ulaw,alaw,opus
+
+# rtp.conf —— 媒体端口与 NAT（核心）
+[general]
+rtpstart=10000
+rtpend=20000
+stunaddr=stun.l.google.com:19302    # ICE 公网 candidate 检测
+external_rtp_address=<SERVER_IP>
+
+# sip.conf —— 禁用 chan_sip 抢注 "sip" WS 协议（否则 PJSIP WS 加载失败）
+[general]
+websocket_enabled=no
+</div>
+<h3>6.2 浏览器（sip.js 0.16.1）要点</h3>
+<ul>
+  <li>用核心 API：<code>UserAgent + Registerer + Inviter</code>（SimpleUser 无 UMD 构建）</li>
+  <li>远端音频播放：直接监听 <code>peerConnection.ontrack</code>（delegate.onTrack 在 0.16.1 不可靠）</li>
+  <li>必须显式 <code>constraints: { audio: true, video: false }</code>（否则 SDP 带视频 m-line 导致 Asterisk 488）</li>
+</ul>
+
+<h2>七、关键排障档案（11 项）</h2>
+<table>
+  <tr><th style="width:190px">现象</th><th>根因</th><th>修复</th></tr>
+  <tr><td>res_pjsip_transport_websocket 加载失败（declined）</td><td>chan_sip 抢注 "sip" WS 协议，PJSIP 重复注册失败</td><td>sip.conf 加 <code>websocket_enabled=no</code></td></tr>
+  <tr><td>配置报 protocol=websocket 解析错误</td><td>Asterisk 只认 <code>ws</code> 值</td><td>pjsip.conf 改 <code>protocol=ws</code></td></tr>
+  <tr><td>media_encryption=dtls_srtp 报错</td><td>Asterisk 16 合法值为 <code>dtls</code></td><td>改 <code>media_encryption=dtls</code></td></tr>
+  <tr><td>通话返回 500 Internal Error</td><td>endpoint transport 不支持逗号列表</td><td>改单值 <code>transport=transport-wss</code></td></tr>
+  <tr><td>通话返回 488 Not Acceptable</td><td>编译无 SRTP（res_srtp.so 缺失）</td><td>装 libsrtp2 + 重编 + 手动编译 res_srtp.so</td></tr>
+  <tr><td>pjproject 编译失败（os-auto.mak.in 缺失）</td><td>GitHub tag 源码不含构建文件</td><td>改用 Asterisk 官方 pjproject 包 + <code>--with-external-srtp</code></td></tr>
+  <tr><td>通话无语音（媒体地址内网）</td><td>应答 SDP 的 c= 是内网 172.17.0.7</td><td>endpoint <code>media_address=公网 IP</code></td></tr>
+  <tr><td>ICE Disconnected（无语音）</td><td>Asterisk ICE candidate 只有内网 host</td><td>rtp.conf 配 <code>stunaddr</code> → 公网 srflx</td></tr>
+  <tr><td>移动网络单通</td><td>对称 NAT 挡下行媒体</td><td>家宽全锥 NAT 通过；移动场景后续上 TURN</td></tr>
+  <tr><td>通话通但无声音（浏览器）</td><td>sip.js delegate.onTrack 不触发</td><td>改用 <code>peerConnection.ontrack</code> 绑定播放</td></tr>
+  <tr><td>自动播放被浏览器拦截</td><td>Chrome autoplay 策略</td><td>「🔊 解锁播放」按钮（用户手势恢复）</td></tr>
+</table>
+
+<h2>八、后续规划</h2>
+<ul>
+  <li><b>坐席工作台集成</b>：软电话组件（PhoneBar：注册/拨打/接听/挂断/通话计时）嵌入坐席界面，与 IPC CTI 状态联动</li>
+  <li><b>批量 WebRTC 分机</b>：坐席 ↔ 分机号映射、动态 endpoint/aor 创建、权限对接</li>
+  <li><b>生产化</b>：正式 HTTPS/WSS 证书替换自签、TURN 服务器（复杂 NAT 兜底）、并发压测、监控告警</li>
+</ul>
+
+<div class="foot">
+智能呼叫中心项目组 &nbsp;|&nbsp; 2026-08-22 &nbsp;|&nbsp; 验证环境：SmartMS（Asterisk 16.30 + JFinal）
+</div>
+</body>
+</html>

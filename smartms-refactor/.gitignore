@@ -1,0 +1,33 @@
+# Maven
+target/
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# 日志与临时文件
+*.log
+*.bak
+
+# 操作系统
+Thumbs.db
+.DS_Store
+
+# 部署临时目录与敏感配置
+target_locked*/
+scripts/server-application.yml
+scripts/server-nginx.conf
+scripts/upload_dist.py
+
+# 内部部署/测试工具（含 SSH 凭据，不随开源发布）
+scripts/
+
+# 日志/临时
+*.log
+*.pid
+target_locked_bak/

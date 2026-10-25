@@ -1,0 +1,74 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: smartms-refactor
+  # 双数据源：conf=smartconf（配置库 27 表），biz=smartcc（业务库 30 表）
+  datasource:
+    dynamic:
+      primary: conf
+      strict: true
+      datasource:
+        conf:
+          url: jdbc:mysql://127.0.0.1:3306/smartconf?characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&zeroDateTimeBehavior=convertToNull&allowPublicKeyRetrieval=true
+          username: root
+          password:
+          driver-class-name: com.mysql.cj.jdbc.Driver
+        biz:
+          url: jdbc:mysql://127.0.0.1:3306/smartcc?characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&zeroDateTimeBehavior=convertToNull&allowPublicKeyRetrieval=true
+          username: root
+          password:
+          driver-class-name: com.mysql.cj.jdbc.Driver
+
+# MyBatis-Plus
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    banner: false
+    db-config:
+      id-type: auto
+
+# 日志
+logging:
+  level:
+    com.smt.refactor: info
+    com.baomidou: warn
+
+# 健康检查
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+
+# ============ CTI 服务（外部依赖，环境变量覆盖） ============
+cti:
+  # 软电话 WebSocket 地址（坐席工作台签入/拨号/事件推送，CTI 已支持 ws 协议）
+  agent-ws: ${CTI_AGENT_WS:ws://127.0.0.1:8082/softphone/ws}
+  # 软电话 HTTP 代理地址（兼容旧协议，备用）
+  agent-server: ${CTI_AGENT_SERVER:http://127.0.0.1:8082}
+  # 实时监控代理（话务监控/坐席状态等，老系统 rtdataquery/sqlQuery）
+  monitor-server: ${CTI_MONITOR_SERVER:http://127.0.0.1:8082}
+
+# ============ WebRTC 分机管理（混合方案语音通道，环境变量覆盖） ============
+# 语音：浏览器 sip.js → wss://<host>:8089/ws（DTLS-SRTP/ICE），媒体不经过本服务
+# 控制：坐席状态/事件仍走上方 cti.*（IPC CTI 8082，并行）
+webrtc:
+  asterisk:
+    host: ${WEBRTC_ASTERISK_HOST:127.0.0.1}   # Asterisk 服务器地址
+    port: ${WEBRTC_ASTERISK_PORT:22}
+    user: ${WEBRTC_ASTERISK_USER:root}
+    password: ${WEBRTC_ASTERISK_PASSWORD:}    # Asterisk SSH 密码（必填，环境变量注入）
+    pjsip-conf: ${WEBRTC_PJSIP_CONF:/etc/asterisk/pjsip.conf}
+    cli: ${WEBRTC_ASTERISK_CLI:asterisk}
+  media-address: ${WEBRTC_MEDIA_ADDRESS:}     # 应答 SDP 媒体地址=公网 IP（云 NAT 环境必需）
+  dtls-cert: ${WEBRTC_DTLS_CERT:/etc/ssl/smartms-ca/asterisk.pem}
+  context: ${WEBRTC_CONTEXT:from-sipreg}
